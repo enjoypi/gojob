@@ -2,9 +2,11 @@ package gojob
 
 import (
 	"context"
+	"runtime"
 	"sync"
 
 	"go.uber.org/atomic"
+	"golang.org/x/sync/semaphore"
 )
 
 type OnError func(error)
@@ -17,16 +19,25 @@ type taskDetail struct {
 type Manager struct {
 	sync.WaitGroup
 	context.Context
-	lastTaskID atomic.Int32
 	sync.Map
+
+	lastTaskID atomic.Int32
+	running    atomic.Int32
+	sem        *semaphore.Weighted
 }
 
 var (
-	DefaultManager Manager
+	DefaultManager *Manager
 )
 
+func NewManager(maxWorkers int64) *Manager {
+	return &Manager{
+		Context: context.Background(),
+		sem:     semaphore.NewWeighted(maxWorkers),
+	}
+}
 func init() {
-	DefaultManager.Context = context.Background()
+	DefaultManager = NewManager(int64(runtime.GOMAXPROCS(0) * 1024))
 }
 
 func (m *Manager) Close() {
@@ -38,6 +49,10 @@ func (m *Manager) Close() {
 }
 
 func (m *Manager) Go(task Task, onError OnError) {
+	if err := m.sem.Acquire(m.Context, 1); err != nil {
+		panic(err)
+	}
+
 	ctx, cancel := context.WithCancel(m.Context)
 	taskID := m.lastTaskID.Inc()
 	m.Map.Store(taskID, &taskDetail{id: taskID, CancelFunc: cancel})
@@ -45,6 +60,7 @@ func (m *Manager) Go(task Task, onError OnError) {
 	go func() {
 		defer cancel()
 		defer m.WaitGroup.Done()
+		defer m.sem.Release(1)
 
 		err := task(ctx, taskID)
 		if err != nil && onError != nil {

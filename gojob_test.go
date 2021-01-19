@@ -4,43 +4,59 @@ import (
 	"context"
 	crand "crypto/rand"
 	"encoding/binary"
+	"fmt"
 	"math/rand"
+	"runtime"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 )
 
-func init() {
-
-}
+var (
+	errCancelled = fmt.Errorf("cancelled")
+	errDone      = fmt.Errorf("done")
+)
 
 func TestTask(t *testing.T) {
 	b := make([]byte, 8)
 	crand.Read(b)
-
 	u := binary.LittleEndian.Uint64(b)
-	t.Log("u", u)
-
 	rand.Seed(int64(u))
+
+	manager := NewManager(int64(runtime.GOMAXPROCS(0)))
+
 	f := func(ctx context.Context, id TaskID) error {
-		t.Log("start", id)
 		select {
 		case <-ctx.Done():
-			t.Log("cancel", id)
-			return nil
-		case <-time.After(time.Millisecond * time.Duration(500+rand.Float32()*1000)):
-			t.Log("end", id)
-			return nil
+			return errDone
+		case <-time.After(time.Millisecond * time.Duration(rand.Float32()*1000)):
+			return errCancelled
 		}
 	}
 
-	Go(f, nil)
-	Go(f, nil)
-	Go(f, nil)
 	go func() {
-		delay := rand.Float32() * 1000
-		t.Log("delay", delay)
+		delay := 1000 + rand.Float32()*1000
 		time.Sleep(time.Millisecond * time.Duration(delay))
-		Close()
+		manager.Close()
 	}()
-	Wait()
+
+	var done, cancelled atomic.Int32
+	n := 16
+	for i := 0; i < n; i++ {
+		manager.Go(f, func(err error) {
+			if err == errDone {
+				done.Inc()
+			}
+
+			if err == errCancelled {
+				cancelled.Inc()
+			}
+		})
+	}
+
+	manager.Wait()
+	require.Equal(t, int32(n), done.Load()+cancelled.Load())
+	t.Log("done", done.Load(), "cancelled", cancelled.Load())
 }
