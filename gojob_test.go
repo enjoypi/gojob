@@ -45,7 +45,7 @@ func TestTask(t *testing.T) {
 	var done, cancelled atomic.Int32
 	n := 16
 	for i := 0; i < n; i++ {
-		manager.Go(f, func(err error) {
+		manager.Go(f, nil, func(err error) {
 			if err == errDone {
 				done.Inc()
 			}

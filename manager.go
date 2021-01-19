@@ -48,12 +48,16 @@ func (m *Manager) Close() {
 	})
 }
 
-func (m *Manager) Go(task Task, onError OnError) {
+func (m *Manager) Go(task Task, values context.Context, onError OnError) {
 	if err := m.sem.Acquire(m.Context, 1); err != nil {
 		panic(err)
 	}
 
 	ctx, cancel := context.WithCancel(m.Context)
+	if values != nil {
+		cancel()
+		ctx, cancel = context.WithCancel(values)
+	}
 	taskID := m.lastTaskID.Inc()
 	m.Map.Store(taskID, &taskDetail{id: taskID, CancelFunc: cancel})
 	m.WaitGroup.Add(1)
@@ -77,8 +81,8 @@ func Close() {
 	DefaultManager.Close()
 }
 
-func Go(task Task, onError OnError) {
-	DefaultManager.Go(task, onError)
+func Go(task Task, values context.Context, onError OnError) {
+	DefaultManager.Go(task, values, onError)
 }
 
 func Wait() {
