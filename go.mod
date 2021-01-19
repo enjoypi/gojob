@@ -1,4 +1,4 @@
-module gojob
+module github.com/enjoypi/gojob
 
 go 1.15
 
