@@ -1,12 +1,11 @@
 package gojob
 
 import (
+	"bytes"
 	"context"
-	crand "crypto/rand"
+	"crypto/rand"
 	"encoding/binary"
 	"fmt"
-	"math/rand"
-	"runtime"
 	"testing"
 	"time"
 
@@ -19,27 +18,44 @@ var (
 	errDone      = fmt.Errorf("done")
 )
 
-func TestTask(t *testing.T) {
-	b := make([]byte, 8)
-	crand.Read(b)
-	u := binary.LittleEndian.Uint64(b)
-	rand.Seed(int64(u))
+func randDur(max uint16) time.Duration {
+	b := make([]byte, 2)
+	_, err := rand.Read(b)
+	if err != nil {
+		panic(err)
+	}
 
-	manager := NewManager(int64(runtime.GOMAXPROCS(0)))
+	var v uint16
+	err = binary.Read(bytes.NewReader(b), binary.LittleEndian, &v)
+	if err != nil {
+		panic(err)
+	}
+	return time.Duration(v%max + 1)
+}
+
+func TestTask(t *testing.T) {
+	manager := NewManager(4)
 
 	f := func(ctx context.Context, id TaskID) error {
+		running := randDur(1000)
+		//t.Log(id, "running", running)
 		select {
 		case <-ctx.Done():
-			return errDone
-		case <-time.After(time.Millisecond * time.Duration(rand.Float32()*1000)):
+			//t.Log(id, "cancelled")
 			return errCancelled
+		case <-time.After(time.Millisecond * running):
+			//t.Log(id, "done")
+			return errDone
 		}
 	}
 
 	go func() {
-		delay := 1000 + rand.Float32()*1000
-		time.Sleep(time.Millisecond * time.Duration(delay))
-		manager.Close()
+		for {
+			delay := randDur(1000)
+			//t.Log("delay", delay)
+			time.Sleep(time.Millisecond * delay)
+			manager.Close()
+		}
 	}()
 
 	var done, cancelled atomic.Int32

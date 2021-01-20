@@ -44,23 +44,28 @@ func (m *Manager) Close() {
 	m.Map.Range(func(key interface{}, value interface{}) bool {
 		cancel := value.(*taskDetail).CancelFunc
 		cancel()
+		m.Map.Delete(key)
 		return true
 	})
 }
 
 func (m *Manager) Go(task Task, values context.Context, onError OnError) {
-	if err := m.sem.Acquire(m.Context, 1); err != nil {
-		panic(err)
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if values != nil {
+		ctx, cancel = context.WithCancel(values)
+	} else {
+		ctx, cancel = context.WithCancel(m.Context)
 	}
 
-	ctx, cancel := context.WithCancel(m.Context)
-	if values != nil {
-		cancel()
-		ctx, cancel = context.WithCancel(values)
-	}
+	// store cancelFunc first for closing
 	taskID := m.lastTaskID.Inc()
 	m.Map.Store(taskID, &taskDetail{id: taskID, CancelFunc: cancel})
 	m.WaitGroup.Add(1)
+
+	if err := m.sem.Acquire(m.Context, 1); err != nil {
+		panic(err)
+	}
 	go func() {
 		defer cancel()
 		defer m.WaitGroup.Done()
